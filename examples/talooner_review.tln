@@ -10,10 +10,7 @@
 //
 // One record per pull request, type "pr". A GitHub Action extracts the facts;
 // the engine decides; the Action executes whatever actions come back. No model
-// is in the decision path — the `enrich` block below is the one exception:
-// it hands a bounded, tool-less sub-agent a single code unit's doc + diff and
-// writes back a fixed-enum verdict. Rules react to the verdict; they never
-// invoke the model themselves (talooner-plugin/docs/llm-review.md).
+// is in the decision path.
 //
 // Two things about the fact model that are load-bearing:
 //
@@ -153,42 +150,4 @@ rule "Design review for UI changes" {
   do notify "design-channel" "UI change in {attr.pr.repo} PR {attr.pr.number} needs a look"
   reason "changes user-facing styling"
   priority MEDIUM
-}
-
-// ─── LLM review of documented code units ─────────────────────────────────────
-//
-// One record per touched, documented unit, type "code_unit" — a separate
-// record from the owning "pr", not an attribute on it. `unit.doc_content` is
-// read from the base branch and `unit.diff` from the PR, both extracted
-// bot-side before this ruleset ever runs, so a fork PR cannot rewrite the doc
-// it is judged against. `unit.important` is the token-economy gate: only
-// units worth a model call become one.
-//
-// The engine runs a ruleset with a code-unit `enrich` block in two passes: the
-// verdict this enrich block writes is not visible to any rule in the same
-// pass, only in the next one. Whatever a tenant's own "safe to auto-approve"
-// rule (e.g. "Auto-approve safe changes" above) decides is therefore
-// independent of this verdict — llm_review gates the merge in its own right,
-// on its own pass, not as a step inside another rule's action list.
-
-enrich "Review important code units" {
-  for records where type == "code_unit" and attr "unit.important" == true
-  stale_after 1 hour
-  tool "llm" "review" {
-    unit attr "unit.name"
-    doc  attr "unit.doc_content"
-    diff attr "unit.diff"
-  }
-  update attr "unit.llm_result"      from result.verdict
-  update attr "unit.llm_explanation" from result.explanation
-}
-
-rule "Block on a documented mismatch" {
-  for records where type == "code_unit"
-    and attr "unit.llm_result" == "mismatch"
-  block "merge"
-  do block "pr.merge"
-  do comment "pr" "{attr.unit.name}: {attr.unit.llm_explanation}"
-  reason "code contradicts its own documentation"
-  priority HIGH
 }
