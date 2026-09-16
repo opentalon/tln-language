@@ -496,8 +496,52 @@ func evalCall(c *ast.CallExpr, record map[string]any, now time.Time) (any, error
 			parts[i] = stringify(v)
 		}
 		return strings.Join(parts, stringify(args[1])), nil
+	case "now":
+		if err := arity(0); err != nil {
+			return nil, err
+		}
+		return now, nil
+	case "date":
+		if err := arity(1); err != nil {
+			return nil, err
+		}
+		t, ok := coerceTime(args[0])
+		if !ok {
+			return nil, fmt.Errorf("date: %q is not a recognizable date", stringify(args[0]))
+		}
+		return t, nil
+	case "days_until":
+		if err := arity(1); err != nil {
+			return nil, err
+		}
+		t, ok := coerceTime(args[0])
+		if !ok {
+			return nil, fmt.Errorf("days_until: %q is not a recognizable date", stringify(args[0]))
+		}
+		return daysBetween(dateOnly(now), t), nil
+	case "days_between":
+		if err := arity(2); err != nil {
+			return nil, err
+		}
+		from, fok := coerceTime(args[0])
+		to, tok := coerceTime(args[1])
+		if !fok {
+			return nil, fmt.Errorf("days_between: %q is not a recognizable date", stringify(args[0]))
+		}
+		if !tok {
+			return nil, fmt.Errorf("days_between: %q is not a recognizable date", stringify(args[1]))
+		}
+		return daysBetween(from, to), nil
 	}
 	return nil, fmt.Errorf("unknown function %q", c.Func)
+}
+
+// daysBetween returns whole calendar days from a to b (b − a) as a float64, so
+// it composes with tln's numeric comparisons (`days_until(due_on) <= 7`). Both
+// operands are day-truncated (coerceTime/dateOnly) before this is called, so
+// the difference is an exact multiple of 24h.
+func daysBetween(a, b time.Time) float64 {
+	return b.Sub(a).Hours() / 24
 }
 
 // stringify renders a value for string builtins: strings pass through, whole
@@ -512,6 +556,14 @@ func stringify(v any) string {
 			return strconv.FormatInt(int64(n), 10)
 		}
 		return strconv.FormatFloat(n, 'g', -1, 64)
+	case time.Time:
+		// A date value (`today`, `date(...)`) renders ISO so it drops cleanly
+		// into a query window, e.g. concat("due_on:[", today, " TO ", today + 7 days, "]").
+		// Day-truncated values print as a plain date; a timestamp (`now()`) keeps its time.
+		if n.Hour() == 0 && n.Minute() == 0 && n.Second() == 0 && n.Nanosecond() == 0 {
+			return n.Format("2006-01-02")
+		}
+		return n.Format(time.RFC3339)
 	case nil:
 		return ""
 	default:

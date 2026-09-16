@@ -749,10 +749,22 @@ type CallExpr struct {
 //	concat(a, b, ...)                 → string (stringify + join)
 //	split(s, sep)                     → list
 //	join(list, sep)                   → string
+//
+// The date toolkit complements the `today` keyword and `date + N units`
+// arithmetic (both already in the expression evaluator):
+//
+//	now()                             → date-time (current instant)
+//	date(s)                           → date (coerce a string, so arithmetic /
+//	                                    comparison works on any date field,
+//	                                    not just `today`)
+//	days_until(d)                     → number (whole days from today to d;
+//	                                    negative when d is in the past)
+//	days_between(a, b)                → number (whole days from a to b)
 var stringBuiltins = map[string]bool{
 	"upper": true, "lower": true, "trim": true, "length": true,
 	"substring": true, "replace": true, "concat": true,
 	"split": true, "join": true,
+	"now": true, "date": true, "days_until": true, "days_between": true,
 }
 
 // IsStringBuiltin reports whether name is a builtin string function, so
