@@ -374,7 +374,17 @@ Expressions have a string toolkit usable anywhere a value is — `upper`, `lower
 for records where upper(substring(attr "vin", 0, 3)) == "1FT"
 ```
 
-Both are mirrored in the JavaScript reactive runtime (`packages/runtime`) — the client-side engine for reactive rules stays in step with the Go compiler.
+…and a date toolkit — `now()`, `date(s)`, `days_until(d)`, `days_between(a, b)` — that complements the `today` keyword and `date ± N units` arithmetic already in the evaluator. `days_until`/`days_between` return a number, so they drive ordinary numeric guards; `now`/`date`/`today` are date values that stringify ISO, so they drop cleanly into a query window:
+
+```tln
+for records where days_until(attr "due_on") <= 7        // due within a week
+  and attr "due_on" >= today                            // and not already overdue
+
+// build a relative date window for a list-tool query argument:
+query concat("due_on:[", today, " TO ", today + 7 days, "]")
+```
+
+The string toolkit is mirrored in the JavaScript reactive runtime (`packages/runtime`) — the client-side engine for reactive rules stays in step with the Go compiler.
 
 ## Metaprogramming — compile-time macros
 
