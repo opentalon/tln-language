@@ -1869,3 +1869,41 @@ workflow "w" {
 		t.Fatalf("FindExpr.Cond: got %#v", fe.Cond)
 	}
 }
+
+// TestParseCallExprStrayTokenTerminates is a regression guard for an OOM bug:
+// parsePrimary returned an error node WITHOUT consuming the offending token, so
+// parseCallExpr's arg loop (gated only by `)`/EOF) spun forever, appending an
+// error node each pass until the process was OOM-killed. The parser must now
+// make progress and report the error instead of hanging. go test's timeout also
+// catches a regression (a hang fails the run).
+func TestParseCallExprStrayTokenTerminates(t *testing.T) {
+	src := `workflow "w" {
+  step "s" {
+    tool "a" "b" { q concat("x", }) }
+  }
+}`
+	tokens, ld := lexer.Lex("t.tln", src)
+	if ld.HasErrors() {
+		t.Fatalf("unexpected lex error: %v", ld)
+	}
+	_, pd := Parse("t.tln", tokens) // must RETURN (not hang)
+	if !pd.HasErrors() {
+		t.Fatal("expected a parse error for the stray `}` in the call args, got none")
+	}
+}
+
+// TestParseConcatWithDateWindow confirms the real inspection-workflow pattern —
+// a relative date window built with the date toolkit inside a concat() arg —
+// parses cleanly (and the spin fix didn't break valid programs).
+func TestParseConcatWithDateWindow(t *testing.T) {
+	prog := mustParse(t, `workflow "Inspection reminder" {
+  step "search" {
+    tool "timly-api" "list_items" {
+      query concat("custom_attributes.next_inspection.value:[", today, " TO ", today + 7 days, "]")
+    }
+  }
+}`)
+	if len(prog.Blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(prog.Blocks))
+	}
+}

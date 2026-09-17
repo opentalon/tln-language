@@ -2887,6 +2887,16 @@ func (p *parser) parsePrimary() ast.Expr {
 
 	case lexer.TokenNumber:
 		val := p.advance().Value
+		// `7 days` — a number immediately followed by a date-duration unit is a
+		// duration literal, so `today + 7 days` evaluates as date + Duration (see
+		// the BinaryExpr date-arithmetic path in the evaluator). Without this the
+		// unit token is left stranded and the caller errors on it — which is what
+		// made `concat(…, today + 7 days, …)` unparseable.
+		if isDurationUnit(p.peek().Type) {
+			n, _ := strconv.Atoi(val)
+			unit := p.advance().Value
+			return &ast.LiteralExpr{Value: ast.Duration{Value: n, Unit: unit}}
+		}
 		n, _ := strconv.ParseFloat(val, 64)
 		return &ast.LiteralExpr{Value: n}
 
@@ -2948,6 +2958,14 @@ func (p *parser) parsePrimary() ast.Expr {
 
 	default:
 		p.errorf("expected expression, got %q", p.peek().Value)
+		// Consume the offending token so every parsePrimary call makes forward
+		// progress. Without this, a loop that calls parseExpr gated only by a
+		// closing delimiter (parseCallExpr's arg list, array literals) spins
+		// forever on a token that can't start an expression — allocating an
+		// error node each pass until the process is OOM-killed.
+		if !p.atEOF() {
+			p.advance()
+		}
 		return &ast.LiteralExpr{Value: nil}
 	}
 }
@@ -2958,8 +2976,19 @@ func (p *parser) parseCallExpr(name string) ast.Expr {
 	p.expect(lexer.TokenLParen)
 	var args []ast.Expr
 	for !p.at(lexer.TokenRParen) && !p.at(lexer.TokenEOF) {
+		before := p.pos
 		args = append(args, p.parseExpr())
 		if p.at(lexer.TokenComma) {
+			p.advance()
+		}
+		// Belt-and-suspenders: if a malformed arg consumed nothing (and wasn't a
+		// comma), force progress so the loop can never spin. parsePrimary now
+		// advances on error too, but guard here as well for any future
+		// non-advancing sub-parser.
+		if p.pos == before {
+			if p.atEOF() {
+				break
+			}
 			p.advance()
 		}
 	}
@@ -3037,6 +3066,18 @@ func (p *parser) expectIdent() string {
 	}
 	p.errorf("expected identifier, got %q", p.peek().Value)
 	return ""
+}
+
+// isDurationUnit reports whether a token is a date-duration unit, so a
+// `<number> <unit>` sequence parses as a duration literal in an expression
+// (`today + 7 days`). Only date units — km (distance) and bare idents are
+// excluded to avoid mis-reading an ordinary `<number> <ident>` sequence.
+func isDurationUnit(tt lexer.TokenType) bool {
+	switch tt {
+	case lexer.TokenDays, lexer.TokenWeeks, lexer.TokenMonths, lexer.TokenYears:
+		return true
+	}
+	return false
 }
 
 func (p *parser) expectDurationUnit() string {
