@@ -153,6 +153,9 @@ const (
 	TokenFeatures
 	TokenConfidence
 	TokenClassifyKw
+	TokenDecide  // "decide" block head — typed decisions
+	TokenChoices // "choices [ ... ]" — decide's fixed choice set
+	TokenAsk     // "ask <expr>" — decide model-mode state expression
 
 	// Keywords — values/units
 	TokenDays
@@ -338,6 +341,9 @@ var keywords = map[string]TokenType{
 	"trained_on":        TokenTrainedOn,
 	"features":          TokenFeatures,
 	"confidence":        TokenConfidence,
+	"decide":            TokenDecide,
+	"choices":           TokenChoices,
+	"ask":               TokenAsk,
 	"days":              TokenDays,
 	"weeks":             TokenWeeks,
 	"months":            TokenMonths,

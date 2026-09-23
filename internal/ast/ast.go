@@ -271,6 +271,44 @@ type ClassifyBlock struct {
 	Priority   *Priority
 }
 
+// DecideBlock is `decide "name" { ... }` — typed decisions producing a
+// calibrated probability distribution over Choices plus the argmax `chosen`
+// and its `confidence`, gated by Confidence. Exactly one mode is populated
+// (validator-enforced):
+//
+//	deterministic: Features + TrainedOn — reuses the classify_knn primitive,
+//	  which emits the full per-choice vote distribution (votes[c]/k). Fully
+//	  auditable and reproducible.
+//	model: Ask + UsingModel — delegates to the injected ToolResolver
+//	  (server=UsingModel, tool="decide"), which returns {chosen, confidence,
+//	  probabilities}. Non-deterministic external boundary, like an MCP call.
+type DecideBlock struct {
+	Pos      Pos
+	Name     string
+	Selector Selector
+	Choices  []Expr // the fixed choice set (string literals)
+	// deterministic mode
+	Features  []Expr
+	TrainedOn *TrainedOnClause
+	LabelAttr string // attribute on training rows holding the class
+	// model mode
+	Ask        Expr   // state expression handed to the model
+	UsingModel string // resolver/server name; runtime handle, not a plan-time model lookup
+	// shared
+	Confidence *float64 // minimum confidence to keep a decision
+	Label      *Template
+	Priority   *Priority
+}
+
+// Mode reports which of the two decide modes this block uses. UsingModel being
+// set is the discriminator (validator guarantees the modes never overlap).
+func (b *DecideBlock) Mode() string {
+	if b.UsingModel != "" {
+		return "model"
+	}
+	return "deterministic"
+}
+
 type SimilarBlock struct {
 	Pos      Pos
 	Name     string
@@ -460,6 +498,7 @@ func (*PredictBlock) blockNode()      {}
 func (*ForecastBlock) blockNode()     {}
 func (*ClusterBlock) blockNode()      {}
 func (*ClassifyBlock) blockNode()     {}
+func (*DecideBlock) blockNode()       {}
 func (*SimilarBlock) blockNode()      {}
 func (*RelatedBlock) blockNode()      {}
 func (*OnBlock) blockNode()           {}
@@ -483,6 +522,7 @@ func (b *PredictBlock) BlockName() string      { return b.Name }
 func (b *ForecastBlock) BlockName() string     { return b.Name }
 func (b *ClusterBlock) BlockName() string      { return b.Name }
 func (b *ClassifyBlock) BlockName() string     { return b.Name }
+func (b *DecideBlock) BlockName() string       { return b.Name }
 func (b *SimilarBlock) BlockName() string      { return b.Name }
 func (b *RelatedBlock) BlockName() string      { return b.Name }
 func (b *OnBlock) BlockName() string           { return b.Name }

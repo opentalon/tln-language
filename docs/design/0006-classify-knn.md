@@ -251,3 +251,6 @@ whichever labeled cluster it is numerically nearest.
 - Non-euclidean metrics (cosine / manhattan).
 - Model persistence / incremental training (ADR-0001 §Future Backend Swap).
 - Multi-label / probability-vector output — single winning class only.
+  *(Update: the `decide` block, [ADR-0014](0014-decide-typed-decisions.md),
+  extends `classify_knn` with `choices` + `emit_distribution` params to emit the
+  full per-choice distribution — the probability-vector output noted here.)*

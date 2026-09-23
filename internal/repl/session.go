@@ -150,6 +150,8 @@ func blockKind(b ast.Block) string {
 		return "cluster"
 	case *ast.ClassifyBlock:
 		return "classify"
+	case *ast.DecideBlock:
+		return "decide"
 	case *ast.SimilarBlock:
 		return "find similar"
 	case *ast.RelatedBlock:

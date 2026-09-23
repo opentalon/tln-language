@@ -206,6 +206,11 @@ type decisionNarrowings struct {
 	Calc   map[string]float64 // calculate scalars, by variable name
 	Class  map[int]string     // classify_knn / predict predicted class, by entity id
 	Why    map[int][]string   // supervised decision path (tree splits), by entity id
+	// decide-block typed decisions, by entity id: the calibrated distribution
+	// over choices and its argmax. Populated alongside Class from the
+	// classify_knn explanation when the block asked for a distribution.
+	Dist   map[int]map[string]float64
+	Chosen map[int]string
 }
 
 func executeForDecisions(
@@ -217,7 +222,7 @@ func executeForDecisions(
 	vars := map[string]any{}
 	var flagged []int
 	flaggedSet := false
-	dn := decisionNarrowings{Calc: map[string]float64{}, Class: map[int]string{}, Why: map[int][]string{}}
+	dn := decisionNarrowings{Calc: map[string]float64{}, Class: map[int]string{}, Why: map[int][]string{}, Dist: map[int]map[string]float64{}, Chosen: map[int]string{}}
 
 	for _, step := range plan.Steps {
 		switch s := step.(type) {
@@ -265,6 +270,12 @@ func executeForDecisions(
 			for _, e := range explanations {
 				if cls, ok := e.Inputs["class"].(string); ok {
 					dn.Class[e.EntityID] = cls
+				}
+				if chosen, ok := e.Inputs["chosen"].(string); ok {
+					dn.Chosen[e.EntityID] = chosen
+				}
+				if probs, ok := e.Inputs["probabilities"].(map[string]float64); ok {
+					dn.Dist[e.EntityID] = probs
 				}
 				if w := ruleWhyLines(e.Rules); len(w) > 0 {
 					dn.Why[e.EntityID] = w
@@ -371,6 +382,8 @@ func whyLines(b ast.Block, ent *entity) []string {
 	case *ast.ClusterBlock:
 		sel = &bb.Selector
 	case *ast.ClassifyBlock:
+		sel = &bb.Selector
+	case *ast.DecideBlock:
 		sel = &bb.Selector
 	case *ast.SimilarBlock:
 		sel = &bb.Selector
@@ -552,6 +565,8 @@ func blockKind(b ast.Block) string {
 		return "cluster"
 	case *ast.ClassifyBlock:
 		return "classify"
+	case *ast.DecideBlock:
+		return "decide"
 	case *ast.SimilarBlock:
 		return "find similar"
 	case *ast.CombineBlock:
@@ -667,6 +682,8 @@ func blockTemplate(b ast.Block) *ast.Template {
 		return bb.Label
 	case *ast.ClassifyBlock:
 		return bb.Label
+	case *ast.DecideBlock:
+		return bb.Label
 	case *ast.SimilarBlock:
 		return bb.Label
 	case *ast.RuleBlock:
@@ -691,6 +708,8 @@ func blockPriority(b ast.Block) string {
 	case *ast.ClusterBlock:
 		pr = bb.Priority
 	case *ast.ClassifyBlock:
+		pr = bb.Priority
+	case *ast.DecideBlock:
 		pr = bb.Priority
 	case *ast.SimilarBlock:
 		pr = bb.Priority

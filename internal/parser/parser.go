@@ -89,6 +89,8 @@ func (p *parser) parseBlock() ast.Block {
 		return p.parseClusterBlock()
 	case lexer.TokenClassify:
 		return p.parseClassifyBlock()
+	case lexer.TokenDecide:
+		return p.parseDecideBlock()
 	case lexer.TokenFind:
 		// `find similar ...` vs `find related ...`
 		if p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Type == lexer.TokenRelated {
@@ -1541,6 +1543,79 @@ func (p *parser) parseClassifyBlock() *ast.ClassifyBlock {
 	}
 	p.expect(lexer.TokenRBrace)
 	return b
+}
+
+// parseDecideBlock reads a `decide "name" { ... }` block. It mirrors
+// parseClassifyBlock: the clause loop is flat and lenient (any clause may
+// appear in any order); mode exclusivity (deterministic features/trained_on
+// vs model ask/using-model) is enforced by the validator, not here.
+func (p *parser) parseDecideBlock() *ast.DecideBlock {
+	tok := p.advance() // decide
+	name := p.expectString()
+	if !p.expect(lexer.TokenLBrace) {
+		p.synchronize()
+		return nil
+	}
+	b := &ast.DecideBlock{Name: name, Pos: ast.Pos{Line: tok.Line, Col: tok.Col}}
+	if p.at(lexer.TokenFor) {
+		b.Selector = p.parseSelector()
+	}
+	for !p.at(lexer.TokenRBrace) && !p.at(lexer.TokenEOF) {
+		switch p.peek().Type {
+		case lexer.TokenChoices:
+			b.Choices = p.parseChoicesClause()
+		case lexer.TokenFeatures:
+			b.Features = p.parseFeaturesClause()
+		case lexer.TokenTrainedOn:
+			b.TrainedOn = p.parseTrainedOnClause()
+		case lexer.TokenLabelAttr:
+			p.advance() // label_attr
+			b.LabelAttr = p.expectString()
+		case lexer.TokenAsk:
+			p.advance() // ask
+			b.Ask = p.parseExpr()
+		case lexer.TokenUsing:
+			// `using model "name"` — the resolver/server handle the executor
+			// calls at runtime (server=name, tool="decide"). Unlike classify's
+			// using-model this is NOT a plan-time fitted-model lookup.
+			p.advance() // using
+			if p.at(lexer.TokenModel) {
+				p.advance()
+			} else {
+				p.errorf("expected 'model' after 'using', got %q", p.peek().Value)
+			}
+			b.UsingModel = p.expectString()
+		case lexer.TokenConfidence:
+			c := p.parseConfidenceClause()
+			b.Confidence = &c
+		case lexer.TokenLabel:
+			b.Label = p.parseLabelClause()
+		case lexer.TokenPriority:
+			pr := p.parsePriority()
+			b.Priority = &pr
+		default:
+			p.errorf("unexpected token %q inside decide block", p.peek().Value)
+			p.synchronizeInBlock()
+		}
+	}
+	p.expect(lexer.TokenRBrace)
+	return b
+}
+
+// parseChoicesClause reads `choices [ "a", "b", ... ]` — a bracketed,
+// comma-separated expression list (string literals in practice).
+func (p *parser) parseChoicesClause() []ast.Expr {
+	p.advance() // choices
+	p.expect(lexer.TokenLBracket)
+	var choices []ast.Expr
+	for !p.at(lexer.TokenRBracket) && !p.at(lexer.TokenEOF) {
+		choices = append(choices, p.parseExpr())
+		if p.at(lexer.TokenComma) {
+			p.advance()
+		}
+	}
+	p.expect(lexer.TokenRBracket)
+	return choices
 }
 
 // parseModelBlock reads a `model "name" { ... }` block with inline fitted

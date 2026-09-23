@@ -284,6 +284,8 @@ func blockPos(b ast.Block) ast.Pos {
 		return bb.Pos
 	case *ast.ClassifyBlock:
 		return bb.Pos
+	case *ast.DecideBlock:
+		return bb.Pos
 	case *ast.SimilarBlock:
 		return bb.Pos
 	case *ast.RelatedBlock:

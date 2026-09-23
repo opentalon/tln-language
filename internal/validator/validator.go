@@ -347,6 +347,8 @@ func collectTemplates(b ast.Block) []*ast.Template {
 		return []*ast.Template{bb.Label}
 	case *ast.ClassifyBlock:
 		return []*ast.Template{bb.Label}
+	case *ast.DecideBlock:
+		return []*ast.Template{bb.Label}
 	case *ast.SimilarBlock:
 		return []*ast.Template{bb.Label}
 	case *ast.RelatedBlock:
@@ -523,6 +525,62 @@ func (v *validator) checkCompleteness() {
 			}
 			if bb.Confidence != nil && (*bb.Confidence < 0 || *bb.Confidence > 1) {
 				v.errAt(bb.Pos, fmt.Sprintf("classify %q: confidence must be in [0, 1], got %v", bb.Name, *bb.Confidence), "")
+			}
+		case *ast.DecideBlock:
+			// choices are required and must be distinct string literals — the
+			// distribution ranges over exactly these, and the planner lowers
+			// them to a []string, so a non-literal or duplicate would silently
+			// shrink the choice set with no runtime evaluation step to catch it.
+			if len(bb.Choices) < 2 {
+				v.errAt(bb.Pos, fmt.Sprintf("decide %q requires a 'choices [ ... ]' clause with at least two options", bb.Name), "")
+			}
+			seenChoice := map[string]bool{}
+			for _, c := range bb.Choices {
+				lit, ok := c.(*ast.LiteralExpr)
+				if !ok {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: choices must be string literals", bb.Name), "")
+					continue
+				}
+				s, ok := lit.Value.(string)
+				if !ok {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: choices must be string literals", bb.Name), "")
+					continue
+				}
+				if seenChoice[s] {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: duplicate choice %q", bb.Name, s), "")
+				}
+				seenChoice[s] = true
+			}
+			// Exactly one mode. model = ask + using model; deterministic =
+			// features + trained_on. The two must not be mixed, and each must
+			// be complete.
+			hasModel := bb.UsingModel != "" || bb.Ask != nil
+			hasDet := len(bb.Features) > 0 || bb.TrainedOn != nil
+			switch {
+			case hasModel && hasDet:
+				v.errAt(bb.Pos, fmt.Sprintf("decide %q: model mode (`ask`/`using model`) and deterministic mode (`features`/`trained_on`) are mutually exclusive", bb.Name), "")
+			case hasModel:
+				if bb.Ask == nil {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: model mode requires an 'ask <expr>' clause", bb.Name), "")
+				}
+				if bb.UsingModel == "" {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: model mode requires a 'using model \"<name>\"' clause", bb.Name), "")
+				}
+			case hasDet:
+				if len(bb.Features) == 0 {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: deterministic mode requires a 'features [ ... ]' clause", bb.Name), "")
+				}
+				if bb.TrainedOn == nil {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: deterministic mode requires a 'trained_on records where ...' clause", bb.Name), "")
+				}
+				if bb.LabelAttr == "" {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: deterministic mode requires a 'label_attr \"<name>\"' clause naming the class column on training rows", bb.Name), "")
+				}
+			default:
+				v.errAt(bb.Pos, fmt.Sprintf("decide %q needs a mode: either `ask ... using model \"...\"` or `features [...] trained_on records where ...`", bb.Name), "")
+			}
+			if bb.Confidence != nil && (*bb.Confidence < 0 || *bb.Confidence > 1) {
+				v.errAt(bb.Pos, fmt.Sprintf("decide %q: confidence must be in [0, 1], got %v", bb.Name, *bb.Confidence), "")
 			}
 		case *ast.ForecastBlock:
 			if bb.Series.Attr == nil {
@@ -1211,6 +1269,13 @@ func walkBlockConditions(b ast.Block, fn func(ast.Condition)) {
 				walkCond(c, fn)
 			}
 		}
+	case *ast.DecideBlock:
+		walkSelector(bb.Selector, fn)
+		if bb.TrainedOn != nil {
+			for _, c := range bb.TrainedOn.Conditions {
+				walkCond(c, fn)
+			}
+		}
 	case *ast.ForecastBlock:
 		walkSelector(bb.Selector, fn)
 		walkCond(bb.When, fn)
@@ -1292,6 +1357,8 @@ func blockPos(b ast.Block) ast.Pos {
 	case *ast.ClusterBlock:
 		return bb.Pos
 	case *ast.ClassifyBlock:
+		return bb.Pos
+	case *ast.DecideBlock:
 		return bb.Pos
 	case *ast.SimilarBlock:
 		return bb.Pos

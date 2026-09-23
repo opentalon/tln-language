@@ -73,6 +73,16 @@ func readString(params map[string]any, key string) string {
 	return ""
 }
 
+// readBoolOr returns the bool param at key, or fallback when absent/non-bool.
+func readBoolOr(params map[string]any, key string, fallback bool) bool {
+	if v, ok := params[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return fallback
+}
+
 // readStringSlice accepts either []string or []any (each element a string).
 // The planner builds slices freshly per step, so both shapes can land
 // here depending on how Params was constructed.
