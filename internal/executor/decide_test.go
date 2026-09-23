@@ -147,6 +147,38 @@ func TestDecideModelResolverError(t *testing.T) {
 	}
 }
 
+// TestDecideModelMissingConfidence: a resolver that returns probabilities but
+// no explicit confidence must have confidence derived from the chosen option's
+// probability, not silently read as 0 and dropped by the gate.
+func TestDecideModelMissingConfidence(t *testing.T) {
+	store := decideStore(t, 1, "urgent outage")
+	mock := &mockMCP{handler: func(_, _ string, _ map[string]any) (any, error) {
+		return map[string]any{
+			"chosen": "p0",
+			"probabilities": map[string]any{
+				"p0": 0.95, "p1": 0.04, "p2": 0.01,
+			},
+		}, nil // no explicit "confidence" field
+	}}
+	e := &Executor{Client: store, Tools: mock}
+	bound := 0.9
+	gc := decideModelStep("jev-small", []string{"p0", "p1", "p2"},
+		&ast.AttrExpr{Name: "subject"}, &bound)
+	vars := map[string]any{"candidates": [][]any{{float64(1)}}}
+
+	out, err := e.execDecideModel(context.Background(), gc, vars)
+	if err != nil {
+		t.Fatalf("execDecideModel: %v", err)
+	}
+	results := decideResults(t, out)
+	if len(results) != 1 {
+		t.Fatalf("decision dropped despite p0=0.95: %d results", len(results))
+	}
+	if conf, _ := results[0]["confidence"].(float64); conf != 0.95 {
+		t.Errorf("confidence = %v, want 0.95 derived from probabilities[chosen]", results[0]["confidence"])
+	}
+}
+
 func decideResults(t *testing.T, result any) []map[string]any {
 	t.Helper()
 	out, ok := result.(map[string]any)

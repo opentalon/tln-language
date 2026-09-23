@@ -17,7 +17,9 @@ import (
 // (server=model, tool="decide", args={state, choices}). The resolver — a Jev /
 // laya / logits-style System-1 decision model on the host side — returns
 // {chosen, confidence, probabilities}. A `confidence >=` bound drops
-// low-confidence decisions, mirroring the deterministic mode's gate. With no
+// low-confidence decisions here on the executor path; the deterministic mode's
+// equivalent gate is applied separately on the `tln test` / `tln explain` path
+// (narrowByML), since the two modes run on different evaluation paths. With no
 // ToolResolver injected the step stubs out (like execMCPCall), so a plan that
 // references a model still runs.
 //
@@ -93,9 +95,20 @@ func (e *Executor) execDecideModel(ctx context.Context, gc *planner.GoComputatio
 			continue
 		}
 		chosen, _ := m["chosen"].(string)
-		conf, _ := toFloat(m["confidence"])
-		if hasConf && conf < confBound {
-			continue // gated out by the confidence threshold
+		conf, hasVal := toFloat(m["confidence"])
+		if !hasVal {
+			// The resolver omitted an explicit confidence. Fall back to the
+			// chosen option's probability so a missing field doesn't silently
+			// read as 0 and drop every decision under a confidence gate.
+			if probs, ok := m["probabilities"].(map[string]any); ok {
+				conf, hasVal = toFloat(probs[chosen])
+			}
+		}
+		// Only gate when we actually have a confidence signal; a resolver that
+		// returns neither confidence nor probabilities can't be thresholded, so
+		// the decision passes through rather than being silently dropped.
+		if hasConf && hasVal && conf < confBound {
+			continue
 		}
 		results = append(results, map[string]any{
 			"entity_id":     id,

@@ -259,6 +259,33 @@ func TestDecideDistributionDeterminism(t *testing.T) {
 	}
 }
 
+// TestDecideDuplicateChoicesDeduped: a repeated choice string must not
+// double-count into the renormalisation denominator (defensive — the validator
+// also rejects duplicates). votes hot=2, cold=1, k=3 with choices
+// ["hot","hot","cold"] must still sum to 1, not 0.6.
+func TestDecideDuplicateChoicesDeduped(t *testing.T) {
+	training := []TrainingRow{
+		train(1, 10, 10, "hot"), train(2, 11, 9, "hot"),
+		train(3, 0, 0, "cold"),
+	}
+	in := classifyInput(map[int][2]float64{100: {10, 10}}, training, 3)
+	in.Params["emit_distribution"] = true
+	in.Params["choices"] = []string{"hot", "hot", "cold"}
+
+	results, err := NewKNNClassifier().Compute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	probs, _ := distOf(t, results, 100)
+	sum := probs["hot"] + probs["cold"]
+	if !almostEq(sum, 1) {
+		t.Errorf("distribution sum = %v (probs %v), want 1 after dedupe", sum, probs)
+	}
+	if !almostEq(probs["hot"], 2.0/3.0) {
+		t.Errorf("probs[hot] = %v, want 0.667", probs["hot"])
+	}
+}
+
 func almostEq(a, b float64) bool {
 	d := a - b
 	if d < 0 {

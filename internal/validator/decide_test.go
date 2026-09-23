@@ -75,6 +75,26 @@ decide "bad" {
 }`, "confidence must be in")
 }
 
+func TestValidateDecideNonLiteralChoices(t *testing.T) {
+	mustError(t, `
+decide "bad" {
+  for records where folder == "Inbox"
+  choices ["Spam", attr "category"]
+  ask attr "subject"
+  using model "m"
+}`, "choices must be string literals")
+}
+
+func TestValidateDecideDuplicateChoices(t *testing.T) {
+	mustError(t, `
+decide "bad" {
+  for records where folder == "Inbox"
+  choices ["Spam", "Spam", "Ham"]
+  ask attr "subject"
+  using model "m"
+}`, "duplicate choice")
+}
+
 func TestValidateDecideNoMode(t *testing.T) {
 	mustError(t, `
 decide "bad" {

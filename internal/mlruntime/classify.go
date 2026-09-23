@@ -172,12 +172,21 @@ func classifyOne(id int, cand []float64, trainVecs [][]float64, training []Train
 // With no votes on any declared choice (or an empty choice set) the
 // lexically-smallest choice is chosen with probability 0.
 func distribution(votes map[string]int, choices []string) (map[string]float64, string, float64) {
+	// Dedupe the declared choices so a repeated choice string can't
+	// double-count its votes into the renormalisation denominator.
 	probs := make(map[string]float64, len(choices))
-	sorted := append([]string(nil), choices...)
+	uniq := make([]string, 0, len(choices))
+	for _, c := range choices {
+		if _, seen := probs[c]; seen {
+			continue
+		}
+		probs[c] = 0
+		uniq = append(uniq, c)
+	}
+	sorted := append([]string(nil), uniq...)
 	sort.Strings(sorted)
 	kept := 0
-	for _, c := range choices {
-		probs[c] = 0
+	for _, c := range uniq {
 		kept += votes[c]
 	}
 	if kept == 0 {

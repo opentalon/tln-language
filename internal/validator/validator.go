@@ -527,18 +527,29 @@ func (v *validator) checkCompleteness() {
 				v.errAt(bb.Pos, fmt.Sprintf("classify %q: confidence must be in [0, 1], got %v", bb.Name, *bb.Confidence), "")
 			}
 		case *ast.DecideBlock:
-			// choices are required and must be string literals.
+			// choices are required and must be distinct string literals — the
+			// distribution ranges over exactly these, and the planner lowers
+			// them to a []string, so a non-literal or duplicate would silently
+			// shrink the choice set with no runtime evaluation step to catch it.
 			if len(bb.Choices) < 2 {
 				v.errAt(bb.Pos, fmt.Sprintf("decide %q requires a 'choices [ ... ]' clause with at least two options", bb.Name), "")
 			}
+			seenChoice := map[string]bool{}
 			for _, c := range bb.Choices {
 				lit, ok := c.(*ast.LiteralExpr)
 				if !ok {
-					continue // non-literal (e.g. attr): let evaluation handle it
-				}
-				if _, ok := lit.Value.(string); !ok {
 					v.errAt(bb.Pos, fmt.Sprintf("decide %q: choices must be string literals", bb.Name), "")
+					continue
 				}
+				s, ok := lit.Value.(string)
+				if !ok {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: choices must be string literals", bb.Name), "")
+					continue
+				}
+				if seenChoice[s] {
+					v.errAt(bb.Pos, fmt.Sprintf("decide %q: duplicate choice %q", bb.Name, s), "")
+				}
+				seenChoice[s] = true
 			}
 			// Exactly one mode. model = ask + using model; deterministic =
 			// features + trained_on. The two must not be mixed, and each must
