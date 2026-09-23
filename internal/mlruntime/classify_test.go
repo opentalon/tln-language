@@ -148,3 +148,121 @@ func TestClassifyNoFeatures(t *testing.T) {
 		t.Fatal("expected an error when no features are configured")
 	}
 }
+
+// distOf pulls the emitted probability distribution + chosen option for an
+// entity out of a Result's explanation. Present only when the block set
+// emit_distribution (i.e. a `decide` block).
+func distOf(t *testing.T, results []Result, id int) (map[string]float64, string) {
+	t.Helper()
+	for _, r := range results {
+		if r.EntityID == id {
+			probs, _ := r.Explanation.Inputs["probabilities"].(map[string]float64)
+			chosen, _ := r.Explanation.Inputs["chosen"].(string)
+			return probs, chosen
+		}
+	}
+	t.Fatalf("no result for entity %d", id)
+	return nil, ""
+}
+
+// TestDecideDistribution is the `decide` deterministic mode: emit_distribution
+// turns the kNN vote into a calibrated distribution over the declared choices.
+// A candidate with a 2-hot / 1-cold neighbourhood must report {hot: 2/3, cold:
+// 1/3}, chosen "hot", and confidence == probabilities[chosen]. A choice nobody
+// votes for is present as an explicit 0.
+func TestDecideDistribution(t *testing.T) {
+	training := []TrainingRow{
+		train(1, 10, 10, "hot"), train(2, 11, 9, "hot"),
+		train(3, 0, 0, "cold"),
+	}
+	in := classifyInput(map[int][2]float64{100: {10, 10}}, training, 3)
+	in.Params["emit_distribution"] = true
+	in.Params["choices"] = []string{"hot", "cold", "warm"} // warm is never voted
+
+	results, err := NewKNNClassifier().Compute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	probs, chosen := distOf(t, results, 100)
+	if chosen != "hot" {
+		t.Errorf("chosen = %q, want hot", chosen)
+	}
+	if !almostEq(probs["hot"], 2.0/3.0) || !almostEq(probs["cold"], 1.0/3.0) {
+		t.Errorf("distribution = %v, want hot≈0.667 cold≈0.333", probs)
+	}
+	if got, ok := probs["warm"]; !ok || got != 0 {
+		t.Errorf("unseen choice 'warm' = %v (present=%v), want explicit 0", got, ok)
+	}
+	// sums to 1 over exactly the declared choices.
+	sum := probs["hot"] + probs["cold"] + probs["warm"]
+	if !almostEq(sum, 1) {
+		t.Errorf("distribution sum = %v, want 1", sum)
+	}
+	// confidence couples to the chosen option's probability.
+	_, conf := classOf(t, results, 100)
+	if !almostEq(conf, probs[chosen]) {
+		t.Errorf("confidence %v != probabilities[chosen] %v", conf, probs[chosen])
+	}
+}
+
+// TestDecideStrayLabelRenormalised: a training row whose label is outside the
+// declared choices (a stray class) must be dropped from the distribution, and
+// the remaining mass renormalised so it still sums to 1 over the choices.
+func TestDecideStrayLabelRenormalised(t *testing.T) {
+	training := []TrainingRow{
+		train(1, 10, 10, "hot"), train(2, 11, 9, "hot"),
+		train(3, 10, 10, "unknown"), // stray: not a declared choice
+	}
+	in := classifyInput(map[int][2]float64{100: {10, 10}}, training, 3)
+	in.Params["emit_distribution"] = true
+	in.Params["choices"] = []string{"hot", "cold"}
+
+	results, err := NewKNNClassifier().Compute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	probs, chosen := distOf(t, results, 100)
+	if chosen != "hot" {
+		t.Errorf("chosen = %q, want hot", chosen)
+	}
+	if _, ok := probs["unknown"]; ok {
+		t.Errorf("stray label 'unknown' leaked into distribution: %v", probs)
+	}
+	// hot got 2 of the 2 declared-choice votes → renormalised to 1.0.
+	if !almostEq(probs["hot"], 1) || !almostEq(probs["cold"], 0) {
+		t.Errorf("distribution = %v, want hot=1 cold=0 after renormalisation", probs)
+	}
+}
+
+// TestDecideDistributionDeterminism: the same input yields byte-identical
+// distributions across runs — decide's deterministic mode inherits the kNN
+// reproducibility contract (ADR-0001).
+func TestDecideDistributionDeterminism(t *testing.T) {
+	build := func() (map[string]float64, string) {
+		training := []TrainingRow{
+			train(1, 10, 10, "a"), train(2, 0, 0, "b"), train(3, 10, 10, "a"),
+		}
+		in := classifyInput(map[int][2]float64{100: {9, 9}}, training, 3)
+		in.Params["emit_distribution"] = true
+		in.Params["choices"] = []string{"a", "b"}
+		results, err := NewKNNClassifier().Compute(context.Background(), in)
+		if err != nil {
+			t.Fatalf("Compute: %v", err)
+		}
+		return distOf(t, results, 100)
+	}
+	p1, c1 := build()
+	p2, c2 := build()
+	if c1 != c2 || p1["a"] != p2["a"] || p1["b"] != p2["b"] {
+		t.Errorf("non-deterministic: run1 {%v %q} run2 {%v %q}", p1, c1, p2, c2)
+	}
+}
+
+func almostEq(a, b float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d < 1e-9
+}

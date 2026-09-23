@@ -17,6 +17,7 @@ Block     = DetectBlock
           | ForecastBlock
           | ClusterBlock
           | ClassifyBlock
+          | DecideBlock
           | SimilarBlock
           | RelatedBlock
           | OnBlock
@@ -380,6 +381,35 @@ ClassifyBody  = Selector
                 [ ConfidenceClause ]
                 [ LabelClause ]
                 [ PriorityClause ]
+
+(* decide: typed decisions. For each selected entity, produce a calibrated
+   probability distribution over `choices`, plus the argmax `chosen` and its
+   `confidence`. Two mutually-exclusive modes (enforced by the validator, not
+   the grammar, so clauses may appear in any order):
+     - deterministic: features + trained_on → reuses the classify_knn primitive,
+       exposing the full per-choice vote distribution (votes[c]/k). Fully
+       auditable and reproducible.
+     - model: ask <Expr> + using model "name" → delegates to the injected
+       ToolResolver (server=name, tool="decide"), which returns
+       {chosen, confidence, probabilities}. A non-deterministic external
+       boundary, like an MCP call — the model (e.g. a Jev / laya System-1
+       decision model) lives on the host side. *)
+DecideBlock   = "decide" STRING "{" DecideBody "}"
+
+DecideBody    = Selector
+                ChoicesClause
+                ( DeterministicMode | ModelMode )
+                [ ConfidenceClause ]
+                [ LabelClause ]
+                [ PriorityClause ]
+
+ChoicesClause = "choices" "[" ExprList "]"
+
+DeterministicMode = FeaturesClause TrainedOnClause LabelAttrClause
+
+ModelMode     = "ask" Expr "using" "model" STRING
+
+LabelAttrClause = "label_attr" STRING
 
 SimilarBlock  = "find" "similar" STRING "{" SimilarBody "}"
 

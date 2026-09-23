@@ -304,7 +304,7 @@ graph TB
 | `model` | A trained ML model with inline fitted params | "Classify/predict from a pinned model." |
 | `module` | Namespace + export reusable blocks | "Package this and import it elsewhere." |
 
-Plus `forecast`, `cluster`, `classify`, `predict`, `find similar`, `find related`, `on` (reactive), `constraint`, `enrich`, `collect`, and cached `threshold`.
+Plus `forecast`, `cluster`, `classify`, `decide` ([typed decisions](#typed-decisions--laya--jev)), `predict`, `find similar`, `find related`, `on` (reactive), `constraint`, `enrich`, `collect`, and cached `threshold`.
 
 ## ML Primitives
 
@@ -317,14 +317,65 @@ tln has built-in ML keywords. Not heavyweight neural nets — lightweight statis
 | `cluster by` | Group similar records | DBSCAN |
 | `predict` | Likelihood of an outcome | Decision tree (interpretable) |
 | `classify` | Categorize records | kNN over feature vectors |
+| `decide` | Typed decision + calibrated distribution over `choices` | kNN distribution, or an external System-1 model |
 | `forecast` | When will a value hit a threshold? | Exponential smoothing |
 | `find similar` | Records resembling a given one | Cosine similarity, or HNSW vector index via the tln-db plugin |
 
 Every prediction is explainable. A decision tree says "this item is at risk because operating_hours > 2000 AND repair_count > 3." The user can read the reasoning.
 
+### Typed decisions — laya / Jev
+
+A `decide` block takes a fixed set of `choices` and returns a **calibrated
+probability distribution** over them — the argmax `chosen` and a `confidence`
+you can gate on. It's tln's surface for the "System 1 decision model" pattern,
+in two modes.
+
+**Model mode** hands raw text to an external decision model. tln supports
+plugging in any System-1 model behind the `using model` handle:
+[**laya**](https://huggingface.co/convaiinnovations/laya-typed-decisions)
+(open-weights ModernBERT typed decisions),
+[**Jev**](https://typesafe.ai/) (hosted), or
+[any small LLM's logits](https://www.nobodywho.ai/posts/jev-in-25-lines/). Wrap
+it as a tool server, bind it with a `connector`, and tln orchestrates + gates
+the decision — it never embeds the model, key, or transport.
+
+```tln
+connector "jev-small" via mcp {
+  endpoint env "JEV_URL"
+  model "Qwen3-0.6B"
+}
+
+decide "email_kind" {
+  for records where folder == "Inbox"
+  choices ["Legitimate", "Spam", "Phishing"]
+  ask concat("Subject: ", attr "subject", "\n\n", attr "body")
+  using model "jev-small"
+  confidence >= 0.9              // act only when the model is sure
+}
+```
+
+**Deterministic mode** needs no model at all — it reuses tln's own kNN and
+exposes the full per-choice distribution (`votes/k`), fully auditable and
+reproducible:
+
+```tln
+decide "email_kind" {
+  for records where folder == "Inbox"
+  choices ["Legitimate", "Spam", "Phishing"]
+  features [attr "link_count", attr "caps_ratio", attr "sender_age_days"]
+  trained_on records where labeled == true
+  label_attr "kind"
+  confidence >= 0.7
+}
+// → chosen "Spam", { Legitimate: 0.0, Spam: 0.8, Phishing: 0.2 }
+```
+
+The decision (`chosen` / `confidence` / `probabilities`) flows into `when`
+guards, labels, and downstream tool args. Full docs: [`docs/decide.md`](docs/decide.md).
+
 ### ML modules — train once, reference many
 
-`predict` and `classify` can train inline (`trained_on records where …`) or draw from a **pre-fitted `model`** — the model analog of a cached `threshold`. A model carries its fitted params inline (version-pinned in source with `computed_from` / `valid_until`), so there is no per-run training. Package models under a `module` namespace and import them by name across files:
+`predict` fits a decision tree inline (`trained_on records where …`); `classify` reads its labeled examples directly (kNN — the examples *are* the model, no training run). Both can also draw from a **pre-fitted `model`** — the model analog of a cached `threshold` — whose fitted params are pinned inline (version-pinned in source with `computed_from` / `valid_until`), so there is no per-run training. (`decide`'s deterministic mode reads labeled examples via `trained_on` like `classify`; its `using model` names a *runtime* decision model, not a pre-fitted `model` block.) Package models under a `module` namespace and import them by name across files:
 
 ```tln
 // fleet_ml.tln

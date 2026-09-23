@@ -526,6 +526,12 @@ func (e *Executor) execComputation(ctx context.Context, gc *planner.GoComputatio
 			return StepResult{}, err
 		}
 		vars[gc.Into] = result
+	case planner.FuncDecideModel:
+		result, err := e.execDecideModel(ctx, gc, vars)
+		if err != nil {
+			return StepResult{}, err
+		}
+		vars[gc.Into] = result
 	case planner.FuncFireActions:
 		vars[gc.Into] = e.execFireActions(ctx, gc, vars)
 	case planner.FuncRemediateMCP:

@@ -125,6 +125,8 @@ func (p *printer) block(b ast.Block) {
 		p.cluster(b)
 	case *ast.ClassifyBlock:
 		p.classify(b)
+	case *ast.DecideBlock:
+		p.decide(b)
 	case *ast.SimilarBlock:
 		p.similar(b)
 	case *ast.RelatedBlock:
@@ -472,6 +474,42 @@ func (p *printer) classify(b *ast.ClassifyBlock) {
 	}
 	if b.LabelAttr != "" {
 		p.line("label_attr " + quote(b.LabelAttr))
+	}
+	if b.Confidence != nil {
+		p.line("confidence >= " + numStr(*b.Confidence))
+	}
+	if b.Label != nil {
+		p.line("label " + template(b.Label))
+	}
+	if b.Priority != nil {
+		p.line("priority " + priorityStr(*b.Priority))
+	}
+	p.close()
+}
+
+// decide prints a `decide "name" { ... }` typed-decision block. It emits the
+// clauses for whichever mode the block uses (deterministic features/trained_on
+// or model ask/using-model); the validator guarantees they never coexist.
+func (p *printer) decide(b *ast.DecideBlock) {
+	p.open("decide " + quote(b.Name))
+	p.selector(b.Selector)
+	if len(b.Choices) > 0 {
+		p.line("choices [" + exprListStr(b.Choices) + "]")
+	}
+	if len(b.Features) > 0 {
+		p.line("features [" + exprListStr(b.Features) + "]")
+	}
+	if b.TrainedOn != nil {
+		p.line("trained_on records where " + condStr(b.TrainedOn.Conditions[0]))
+	}
+	if b.LabelAttr != "" {
+		p.line("label_attr " + quote(b.LabelAttr))
+	}
+	if b.Ask != nil {
+		p.line("ask " + exprStr(b.Ask))
+	}
+	if b.UsingModel != "" {
+		p.line("using model " + quote(b.UsingModel))
 	}
 	if b.Confidence != nil {
 		p.line("confidence >= " + numStr(*b.Confidence))

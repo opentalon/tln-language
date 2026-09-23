@@ -22,6 +22,7 @@ const (
 	FuncClusterDBSCAN        = "cluster_dbscan"
 	FuncSimilarityCosine     = "similarity_cosine"
 	FuncClassifyKNN          = "classify_knn"
+	FuncDecideModel          = "decide_model"
 	FuncPPRTopK              = "ppr_topk"
 	FuncRenderTemplate       = "render_template"
 	FuncRemediateMCP         = "remediate_mcp"
@@ -389,6 +390,11 @@ func rewriteBlockThresholds(b ast.Block, th map[string]float64) {
 		if bb.TrainedOn != nil {
 			conds(bb.TrainedOn.Conditions)
 		}
+	case *ast.DecideBlock:
+		sel(&bb.Selector)
+		if bb.TrainedOn != nil {
+			conds(bb.TrainedOn.Conditions)
+		}
 	case *ast.ForecastBlock:
 		sel(&bb.Selector)
 		if bb.When != nil {
@@ -551,6 +557,8 @@ func (p *planner) planAll() (map[string]*QueryPlan, diagnostic.List) {
 			plans[bb.Name] = p.planClusterBlock(bb)
 		case *ast.ClassifyBlock:
 			plans[bb.Name] = p.planClassifyBlock(bb)
+		case *ast.DecideBlock:
+			plans[bb.Name] = p.planDecideBlock(bb)
 		case *ast.SimilarBlock:
 			plans[bb.Name] = p.planSimilarBlock(bb)
 		case *ast.RelatedBlock:
@@ -1108,6 +1116,77 @@ func (p *planner) planClassifyBlock(b *ast.ClassifyBlock) *QueryPlan {
 // defaultKNN is the neighbour count when a classify block doesn't override it.
 // Small, matching the per-tenant data volumes tln sees (issue #70).
 const defaultKNN = 5
+
+// planDecideBlock compiles a `decide` block into a query plan. The two modes
+// diverge on the compute step:
+//
+//	deterministic (features + trained_on): reuse the classify_knn MLComputation,
+//	  adding `choices` and `emit_distribution` so the primitive attaches the full
+//	  per-choice vote distribution. The training set rides in an auxiliary query,
+//	  exactly like classify.
+//	model (ask + using model): a decide_model GoComputation the executor
+//	  dispatches at runtime through the injected ToolResolver.
+func (p *planner) planDecideBlock(b *ast.DecideBlock) *QueryPlan {
+	plan := &QueryPlan{BlockName: b.Name}
+	qb := p.newQueryBuilder()
+	qb.addSelector(b.Selector)
+	plan.Steps = append(plan.Steps, &FactQuery{
+		Query:    qb.build(),
+		BindVars: qb.bindVars(),
+		Into:     "candidates",
+	})
+
+	choices := exprListToStrings(b.Choices)
+
+	if b.Mode() == "model" {
+		params := map[string]any{
+			"ask":        b.Ask,
+			"model":      b.UsingModel,
+			"choices":    choices,
+			"block_name": b.Name,
+		}
+		if b.Confidence != nil {
+			params["confidence"] = *b.Confidence
+		}
+		plan.Steps = append(plan.Steps, &GoComputation{
+			Function: FuncDecideModel,
+			Input:    "candidates",
+			Params:   params,
+			Into:     "decisions",
+		})
+		return plan
+	}
+
+	// Deterministic mode: reuse classify_knn, but ask it to emit the full
+	// per-choice distribution.
+	params := map[string]any{
+		"features":          b.Features,
+		"feature_names":     exprListToAttrNames(b.Features),
+		"label_attr":        b.LabelAttr,
+		"training_var":      "training",
+		"k":                 defaultKNN,
+		"choices":           choices,
+		"emit_distribution": true,
+	}
+	tqb := p.newQueryBuilder()
+	tqb.addSelector(ast.Selector{Target: "records", Conditions: b.TrainedOn.Conditions})
+	plan.Steps = append(plan.Steps, &FactQuery{
+		Query:     tqb.build(),
+		BindVars:  tqb.bindVars(),
+		Into:      "training",
+		Auxiliary: true,
+	})
+	if b.Confidence != nil {
+		params["confidence"] = *b.Confidence
+	}
+	plan.Steps = append(plan.Steps, &MLComputation{
+		Function: FuncClassifyKNN,
+		Input:    "candidates",
+		Params:   params,
+		Into:     "decisions",
+	})
+	return plan
+}
 
 func (p *planner) planSimilarBlock(b *ast.SimilarBlock) *QueryPlan {
 	plan := &QueryPlan{BlockName: b.Name}
@@ -2308,6 +2387,21 @@ func exprListToAttrNames(exprs []ast.Expr) []string {
 		name := attrVarName(e)
 		if name != "" && name != "val" {
 			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// exprListToStrings extracts the string values from a list of string-literal
+// expressions (a `choices [ ... ]` clause). Non-literal entries are skipped;
+// the validator has already required string literals.
+func exprListToStrings(exprs []ast.Expr) []string {
+	out := make([]string, 0, len(exprs))
+	for _, e := range exprs {
+		if lit, ok := e.(*ast.LiteralExpr); ok {
+			if s, ok := lit.Value.(string); ok {
+				out = append(out, s)
+			}
 		}
 	}
 	return out

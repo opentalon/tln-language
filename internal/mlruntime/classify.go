@@ -93,15 +93,23 @@ func (c *KNNClassifier) Compute(_ context.Context, in Input) ([]Result, error) {
 		normalizeVec(trainVecs[i], mean, std)
 	}
 
+	// `decide` blocks ask for the full per-choice distribution (votes[c]/k),
+	// not just the winning class. choices declares the categories the
+	// distribution ranges over so unseen choices surface as explicit zeros.
+	emitDist := readBoolOr(in.Params, "emit_distribution", false)
+	choices := readStringSlice(in.Params, "choices")
+
 	results := make([]Result, 0, len(candIDs))
 	for i, id := range candIDs {
-		results = append(results, classifyOne(id, candVecs[i], trainVecs, in.Training, k))
+		results = append(results, classifyOne(id, candVecs[i], trainVecs, in.Training, k, emitDist, choices))
 	}
 	return results, nil
 }
 
-// classifyOne runs the vote for a single candidate.
-func classifyOne(id int, cand []float64, trainVecs [][]float64, training []TrainingRow, k int) Result {
+// classifyOne runs the vote for a single candidate. When emitDist is set it
+// also attaches a calibrated probability distribution over choices (votes/k,
+// renormalised so it sums to 1 over exactly the declared choices).
+func classifyOne(id int, cand []float64, trainVecs [][]float64, training []TrainingRow, k int, emitDist bool, choices []string) Result {
 	type nbr struct {
 		idx  int
 		dist float64
@@ -123,20 +131,70 @@ func classifyOne(id int, cand []float64, trainVecs [][]float64, training []Train
 		})
 	}
 	winner, winVotes := majorityVote(votes)
+	confidence := float64(winVotes) / float64(k)
+	var dist map[string]float64
+	if emitDist {
+		// decide mode: the decision ranges over exactly the declared choices.
+		// Derive the distribution, the chosen option, and the confidence from
+		// the votes restricted to those choices, so the winner is always a
+		// declared choice and confidence == probabilities[chosen].
+		dist, winner, confidence = distribution(votes, choices)
+	}
+	inputs := map[string]any{
+		"class":       winner,
+		"k":           k,
+		"k_neighbors": neighbours,
+	}
+	if emitDist {
+		inputs["probabilities"] = dist
+		inputs["chosen"] = winner
+	}
 	return Result{
 		EntityID: id,
 		Value:    winner,
 		Explanation: Explanation{
 			Primitive:  "classify_knn",
 			EntityID:   id,
-			Confidence: float64(winVotes) / float64(k),
-			Inputs: map[string]any{
-				"class":       winner,
-				"k":           k,
-				"k_neighbors": neighbours,
-			},
+			Confidence: confidence,
+			Inputs:     inputs,
 		},
 	}
+}
+
+// distribution builds a calibrated probability distribution over the declared
+// choices from the k-neighbour vote counts, and returns it with the argmax
+// choice and that choice's probability. Every declared choice is present
+// (unseen ones are explicit 0.0); votes for labels outside `choices` (stray
+// training classes) are dropped and the remaining mass is renormalised so the
+// distribution sums to 1 over exactly `choices`. The winner is the argmax over
+// declared choices (lexically-smallest tie-break, matching majorityVote), so
+// the chosen option is always a declared choice and prob == probs[chosen].
+// With no votes on any declared choice (or an empty choice set) the
+// lexically-smallest choice is chosen with probability 0.
+func distribution(votes map[string]int, choices []string) (map[string]float64, string, float64) {
+	probs := make(map[string]float64, len(choices))
+	sorted := append([]string(nil), choices...)
+	sort.Strings(sorted)
+	kept := 0
+	for _, c := range choices {
+		probs[c] = 0
+		kept += votes[c]
+	}
+	if kept == 0 {
+		if len(sorted) > 0 {
+			return probs, sorted[0], 0
+		}
+		return probs, "", 0
+	}
+	chosen, best := "", -1.0
+	for _, c := range sorted {
+		p := float64(votes[c]) / float64(kept)
+		probs[c] = p
+		if p > best {
+			chosen, best = c, p
+		}
+	}
+	return probs, chosen, best
 }
 
 // featureVec projects an entity's attribute map onto the feature axes.
