@@ -744,6 +744,22 @@ func resolveExprValue(expr ast.Expr, vars map[string]any) any {
 	case *ast.IdentExpr:
 		return e.Name
 	default:
+		// Any other expression — function calls (concat, days_until, …), the
+		// today / now() clock, arithmetic (today + N days) — evaluates through
+		// the shared expression evaluator, the same one `when` guards use, so the
+		// date and string toolkits work in tool-call args, not only in guards.
+		// The scope mirrors stepGuardPasses: the triggering row (if any) plus the
+		// step-result scope under StepScopeKey.
+		rec := map[string]any{}
+		if row, ok := vars[TriggerRowVar].(map[string]any); ok {
+			for k, v := range row {
+				rec[k] = v
+			}
+		}
+		rec[constraints.StepScopeKey] = vars
+		if v, err := constraints.EvalExpr(expr, rec, time.Now().UTC()); err == nil {
+			return v
+		}
 		return nil
 	}
 }
