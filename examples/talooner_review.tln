@@ -134,7 +134,6 @@ rule "Security review for new dependencies" {
     and attr "pr.new_dependencies" > 0
   requires "review.security_team"
   do require "review.security_team"
-  do assign "pr" "@org/security"
   do comment "pr" "{attr.pr.new_dependencies} new dependencies — security review required"
   reason "adds new dependencies"
   priority HIGH

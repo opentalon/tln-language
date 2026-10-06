@@ -327,7 +327,6 @@ test "New dependencies pull in the security team" {
     flagged 1
     not flagged 2
     did 1 require "review.security_team"
-    did 1 assign "pr" "@org/security"
     did 1 comment "pr" contains "3 new dependencies"
     did_not 2 require "review.security_team"
   }
