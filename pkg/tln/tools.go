@@ -62,7 +62,7 @@ var (
 // against cycles/shared pointers.
 func collectToolRefs(v reflect.Value, seen map[ToolRef]bool, out *[]ToolRef, visited map[uintptr]bool) {
 	switch v.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if v.IsNil() {
 			return
 		}
