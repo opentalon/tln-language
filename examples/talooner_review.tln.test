@@ -218,6 +218,7 @@ test "Critical path PR requires a senior reviewer and tags the owner" {
     flagged 2
     not flagged 3
     count == 2
+    did 1 block "pr.merge"
     did 1 require "review.senior_engineer"
     did 1 assign "pr" "@alice"
     did 1 comment "pr" contains "@alice"
@@ -272,6 +273,7 @@ test "Author owning the critical code they changed escalates" {
   expect {
     flagged 1
     not flagged 2
+    did 1 block "pr.merge"
     did 1 require "review.senior_engineer"
     did 1 comment "pr" contains "@alice"
     did_not 2 require "review.senior_engineer"
@@ -301,6 +303,7 @@ test "Large PRs require human review at the 500-line boundary" {
     flagged 1
     not flagged 2
     flagged 3
+    did 1 block "pr.merge"
     did 1 require "review.human"
     did_not 2 require "review.human"
   }
@@ -326,6 +329,7 @@ test "New dependencies pull in the security team" {
   expect {
     flagged 1
     not flagged 2
+    did 1 block "pr.merge"
     did 1 require "review.security_team"
     did 1 comment "pr" contains "3 new dependencies"
     did_not 2 require "review.security_team"
