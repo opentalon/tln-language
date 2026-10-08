@@ -208,6 +208,6 @@ succeed.
 
 ## Worked example
 
-`examples/talooner_review.tln` is a full deterministic GitHub PR review policy
-built on `do` actions, with `examples/talooner_review.tln.test` covering the
+`examples/pr_review.tln` is a full deterministic GitHub PR review policy
+built on `do` actions, with `examples/pr_review.tln.test` covering the
 cases where rules must *not* fire.

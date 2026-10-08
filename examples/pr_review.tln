@@ -1,12 +1,10 @@
-// Talooner — deterministic GitHub PR review policy.
+// Deterministic GitHub PR review policy.
 //
-// The phase-0 exit artifact for https://github.com/opentalon/talooner: the
-// project brief's v1 ruleset, expressed in Tln, running against synthetic PR
-// facts with no GitHub and no bot code. If this file can't be written, the
-// Talooner design is wrong.
+// A PR review ruleset expressed in Tln, running against synthetic PR facts
+// with no GitHub and no bot code.
 //
-//   ./tln build examples/talooner_review.tln
-//   ./tln test  examples/talooner_review.tln examples/talooner_review.tln.test
+//   ./tln build examples/pr_review.tln
+//   ./tln test  examples/pr_review.tln examples/pr_review.tln.test
 //
 // One record per pull request, type "pr". A GitHub Action extracts the facts;
 // the engine decides; the Action executes whatever actions come back. No model

@@ -1,8 +1,8 @@
-// Test suite for talooner_review.tln — the Talooner phase-0 exit artifact.
+// Test suite for pr_review.tln.
 //
 // Run:
 //   go build ./cmd/tln
-//   ./tln test examples/talooner_review.tln examples/talooner_review.tln.test
+//   ./tln test examples/pr_review.tln examples/pr_review.tln.test
 //
 // Synthetic PR facts only. No GitHub, no cluster, no bot.
 //
@@ -110,12 +110,12 @@ test "Draft PR is not approved even when everything else is clean" {
   }
 }
 
-// This pins the accepted v1 risk (talooner-plugin/OPEN-QUESTIONS.md A1), so a
+// This pins a known risk of two-valued evaluation, so a
 // future engine change to three-valued evaluation surfaces as a failure here
 // rather than as a silently different review. A PR whose file extraction died
 // has NO `pr.changed_files`, so `not is "critical_path"` is TRUE and the PR is
 // approved without anything having checked it.
-test "Failed extraction approves — the accepted A1 risk, pinned" {
+test "Failed extraction approves — the known two-valued risk, pinned" {
   given {
     record 1 type "pr"
     attr 1 "pr.number" 106
