@@ -123,20 +123,19 @@ func ReferencedAttrs(rule *ast.RuleBlock) []string {
 	return names
 }
 
-// templateRefAttr maps a template ref path to the bare attribute name to
-// fetch: "item.name"→"name", "attr.km"→"km", "name"→"name". Paths scoped to
-// context return "" so they're skipped.
+// templateRefAttr maps a template ref path to the attribute name to
+// fetch, dots kept: "item.name"→"name", "attr.pr.draft"→"pr.draft".
+// Paths scoped to context return "" so they're skipped.
 func templateRefAttr(path string) string {
-	parts := strings.Split(path, ".")
-	switch len(parts) {
-	case 1:
-		return parts[0]
-	case 2:
-		if parts[0] == "item" || parts[0] == "attr" {
-			return parts[1]
+	if strings.HasPrefix(path, "context.") {
+		return ""
+	}
+	for _, prefix := range []string{"attr.", "item."} {
+		if rest, ok := strings.CutPrefix(path, prefix); ok {
+			return rest
 		}
 	}
-	return ""
+	return path
 }
 
 // Resolve drops the actions of rules that lost defeasible resolution for

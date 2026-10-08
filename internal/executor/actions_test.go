@@ -219,3 +219,47 @@ func flatActions(results map[string]*BlockResult) []FiredAction {
 	}
 	return out
 }
+
+func TestFireActions_DottedAttrTemplateRefRenders(t *testing.T) {
+	src := `
+rule "Deps" {
+  for records where type == "pr" and attr "pr.new_dependencies" > 0
+  do comment "pr" "{attr.pr.new_dependencies} new deps, {pr.lines_changed} lines, draft {attr.pr.draft}"
+}
+`
+	facts := []ast.TestDatum{
+		{Kind: "record", ID: 7, Fields: map[string]any{"type": "pr"}},
+		{Kind: "attr", ID: 7, Fields: map[string]any{"pr.new_dependencies": 2.0}},
+		{Kind: "attr", ID: 7, Fields: map[string]any{"pr.lines_changed": 41.0}},
+		{Kind: "attr", ID: 7, Fields: map[string]any{"pr.draft": false}},
+	}
+	got := runActionSrc(t, src, facts)["Deps"].Actions
+	if len(got) != 1 {
+		t.Fatalf("want 1 action, got %#v", got)
+	}
+	want := []any{"pr", "2 new deps, 41 lines, draft false"}
+	if !reflect.DeepEqual(got[0].Args, want) {
+		t.Fatalf("args: got %#v, want %#v", got[0].Args, want)
+	}
+}
+
+func TestFireActions_UnsetDottedAttrTemplateRefStaysVisible(t *testing.T) {
+	src := `
+rule "Owner" {
+  for records where type == "pr" and attr "risk" == "low"
+  do comment "pr" "owned by {attr.user.owner}, ctx {context.user.role}"
+}
+`
+	facts := []ast.TestDatum{
+		{Kind: "record", ID: 7, Fields: map[string]any{"type": "pr"}},
+		{Kind: "attr", ID: 7, Fields: map[string]any{"risk": "low"}},
+	}
+	got := runActionSrc(t, src, facts)["Owner"].Actions
+	if len(got) != 1 {
+		t.Fatalf("want 1 action, got %#v", got)
+	}
+	want := []any{"pr", "owned by {attr.user.owner}, ctx {context.user.role}"}
+	if !reflect.DeepEqual(got[0].Args, want) {
+		t.Fatalf("args: got %#v, want %#v", got[0].Args, want)
+	}
+}
