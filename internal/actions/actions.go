@@ -123,9 +123,9 @@ func ReferencedAttrs(rule *ast.RuleBlock) []string {
 	return names
 }
 
-// templateRefAttr maps a template ref path to the bare attribute name to
-// fetch: "item.name"→"name", "attr.km"→"km", "name"→"name". Paths scoped to
-// context return "" so they're skipped.
+// templateRefAttr maps a template ref path to the attribute name to
+// fetch, dots kept: "item.name"→"name", "attr.pr.draft"→"pr.draft".
+// Paths scoped to context return "" so they're skipped.
 func templateRefAttr(path string) string {
 	if strings.HasPrefix(path, "context.") {
 		return ""
