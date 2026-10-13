@@ -22,7 +22,6 @@ func TestExecutionOrderWritersBeforeReaders(t *testing.T) {
 }
 
 func TestExecutionOrderSelfReadIsNotADependency(t *testing.T) {
-	// An enrich that refreshes the attribute it filters on reads its own write.
 	plans := map[string]*QueryPlan{
 		"refresh": {Reads: []string{"stock"}, Writes: []string{"stock"}},
 		"alert":   {Reads: []string{"stock"}},
@@ -33,7 +32,7 @@ func TestExecutionOrderSelfReadIsNotADependency(t *testing.T) {
 	}
 }
 
-func TestExecutionOrderCycleRunsInNameOrderLast(t *testing.T) {
+func TestExecutionOrderBreaksCycleAtMinNameMember(t *testing.T) {
 	plans := map[string]*QueryPlan{
 		"x": {Reads: []string{"b"}, Writes: []string{"a"}},
 		"y": {Reads: []string{"a"}, Writes: []string{"b"}},
@@ -43,7 +42,48 @@ func TestExecutionOrderCycleRunsInNameOrderLast(t *testing.T) {
 	if want := []string{"z", "x", "y"}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("order = %v, want %v", order, want)
 	}
-	if want := []string{"x", "y"}; !reflect.DeepEqual(cycle, want) {
+	if want := []string{"x"}; !reflect.DeepEqual(cycle, want) {
 		t.Fatalf("cycle = %v, want %v", cycle, want)
+	}
+}
+
+func TestExecutionOrderReaderDownstreamOfCycleRunsAfterItsWriter(t *testing.T) {
+	plans := map[string]*QueryPlan{
+		"x":        {Reads: []string{"b"}, Writes: []string{"a"}},
+		"y":        {Reads: []string{"a"}, Writes: []string{"b"}},
+		"a reader": {Reads: []string{"a"}},
+	}
+	order, cycle := ExecutionOrder(plans)
+	if want := []string{"x", "a reader", "y"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	if want := []string{"x"}; !reflect.DeepEqual(cycle, want) {
+		t.Fatalf("cycle = %v, want %v", cycle, want)
+	}
+}
+
+func TestPlanReadsCoverEveryGate(t *testing.T) {
+	plans := planAll(t, `
+enrich "z enrich" {
+  for records where type == "unit"
+  stale_after 1 hour
+  tool "llm" "review" { unit attr "name" }
+  update attr "reviewed_at" from result.at
+  update attr "llm_result" from result.verdict
+}
+
+rule "a temporal" {
+  for records where type == "unit" and attr "reviewed_at" newer_than 1 hours
+  do block "pr.merge"
+}
+
+detect "b mismatch" {
+  for records where type == "unit" and attr "llm_result" == "mismatch"
+  flag matching items
+}
+`)
+	order, _ := ExecutionOrder(plans)
+	if want := []string{"z enrich", "a temporal", "b mismatch"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("order = %v, want %v", order, want)
 	}
 }

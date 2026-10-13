@@ -7,13 +7,6 @@ import (
 	"github.com/opentalon/tln-language/internal/ast"
 )
 
-// ExecutionOrder returns the plan names in the order RunAll runs them: a
-// block runs after every other block that writes an attribute it reads, so
-// an enrich gated on another enrich's result (a typed decision deciding
-// whether to run a review) and a rule on either see the facts they depend
-// on in the same run. Blocks with no dependency between them run in name
-// order. Blocks on a dependency cycle can't be ordered; they are returned
-// in name order after the rest, and also listed in cycle.
 func ExecutionOrder(plans map[string]*QueryPlan) (order, cycle []string) {
 	names := make([]string, 0, len(plans))
 	for name := range plans {
@@ -21,7 +14,7 @@ func ExecutionOrder(plans map[string]*QueryPlan) (order, cycle []string) {
 	}
 	sort.Strings(names)
 
-	writers := map[string][]string{} // attr → blocks that write it
+	writers := map[string][]string{}
 	for _, name := range names {
 		for _, a := range dedupe(plans[name].Writes) {
 			writers[a] = append(writers[a], name)
@@ -45,69 +38,125 @@ func ExecutionOrder(plans map[string]*QueryPlan) (order, cycle []string) {
 		}
 	}
 
+	done := make(map[string]bool, len(names))
 	var ready []string
 	for _, name := range names {
 		if inDegree[name] == 0 {
 			ready = append(ready, name)
 		}
 	}
-	done := make(map[string]bool, len(names))
-	for len(ready) > 0 {
+	for len(order) < len(names) {
+		if len(ready) == 0 {
+			for _, name := range names {
+				if !done[name] && onCycle(name, dependents, done) {
+					ready = append(ready, name)
+					cycle = append(cycle, name)
+					break
+				}
+			}
+		}
 		sort.Strings(ready)
 		name := ready[0]
 		ready = ready[1:]
+		if done[name] {
+			continue
+		}
 		done[name] = true
 		order = append(order, name)
 		for _, d := range dependents[name] {
 			inDegree[d]--
-			if inDegree[d] == 0 {
+			if inDegree[d] == 0 && !done[d] {
 				ready = append(ready, d)
 			}
 		}
 	}
-	for _, name := range names {
-		if !done[name] {
-			cycle = append(cycle, name)
-		}
-	}
-	return append(order, cycle...), cycle
+	return order, cycle
 }
 
-// enrichReads lists the attributes an enrich block reads: its selector and
-// the expressions it passes to the tool.
-func (p *planner) enrichReads(b *ast.EnrichBlock) []string {
+func onCycle(start string, dependents map[string][]string, done map[string]bool) bool {
+	seen := map[string]bool{}
+	stack := append([]string(nil), dependents[start]...)
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if n == start {
+			return true
+		}
+		if seen[n] || done[n] {
+			continue
+		}
+		seen[n] = true
+		stack = append(stack, dependents[n]...)
+	}
+	return false
+}
+
+func (p *planner) blockReads(b ast.Block) []string {
 	var out []string
 	add := func(n string) { out = append(out, n) }
-	for _, c := range b.Selector.Conditions {
-		p.walkReads(c, add, map[string]bool{})
+	cond := func(c ast.Condition) { p.walkReads(c, add, map[string]bool{}) }
+	sel := func(s ast.Selector) {
+		for _, c := range s.Conditions {
+			cond(c)
+		}
 	}
-	if b.Call != nil {
-		for _, e := range b.Call.Args {
+	exprs := func(es []ast.Expr) {
+		for _, e := range es {
 			walkExprAttrs(e, add)
 		}
 	}
-	return dedupe(out)
-}
-
-// ruleReads lists the attributes a rule reads: its selector, its when
-// condition and its action clauses' templates.
-func (p *planner) ruleReads(b *ast.RuleBlock) []string {
-	var out []string
-	add := func(n string) { out = append(out, n) }
-	if b.Selector != nil {
-		for _, c := range b.Selector.Conditions {
-			p.walkReads(c, add, map[string]bool{})
+	switch bb := b.(type) {
+	case *ast.RuleBlock:
+		if bb.Selector != nil {
+			sel(*bb.Selector)
 		}
+		cond(bb.When)
+		out = append(out, actions.ReferencedAttrs(bb)...)
+	case *ast.EnrichBlock:
+		sel(bb.Selector)
+		if bb.Call != nil {
+			for _, e := range bb.Call.Args {
+				walkExprAttrs(e, add)
+			}
+		}
+	case *ast.DetectBlock:
+		sel(bb.Selector)
+		for _, c := range bb.Having {
+			cond(c)
+		}
+	case *ast.ClassifyBlock:
+		sel(bb.Selector)
+		exprs(bb.Features)
+	case *ast.PredictBlock:
+		sel(bb.Selector)
+		exprs(bb.Features)
+	case *ast.DecideBlock:
+		sel(bb.Selector)
+		exprs(bb.Features)
+		walkExprAttrs(bb.Ask, add)
+	case *ast.ClusterBlock:
+		sel(bb.Selector)
+		exprs(bb.ByAttrs)
+	case *ast.SimilarBlock:
+		sel(bb.Selector)
+		walkExprAttrs(bb.To, add)
+	case *ast.RelatedBlock:
+		sel(bb.Selector)
+		walkExprAttrs(bb.To, add)
+		exprs(bb.Seeds)
+	case *ast.CombineBlock:
+		sel(bb.Selector)
+	case *ast.ForecastBlock:
+		sel(bb.Selector)
+		cond(bb.When)
+	case *ast.RecommendBlock:
+		cond(bb.When)
+	case *ast.StateMachineBlock:
+		out = append(out, collectAttrNames(bb)...)
 	}
-	p.walkReads(b.When, add, map[string]bool{})
-	out = append(out, actions.ReferencedAttrs(b)...)
 	return dedupe(out)
 }
 
-// walkReads is walkAttrRefs that also follows what the planner inlines: an
-// `is "name"` define and a derived predicate `name(v)` read whatever their
-// bodies read. seen guards against a define/derive cycle (the validator
-// reports those).
 func (p *planner) walkReads(c ast.Condition, add func(string), seen map[string]bool) {
 	switch cc := c.(type) {
 	case *ast.LogicalCondition:

@@ -8,10 +8,6 @@ import (
 	"github.com/opentalon/tln-language/pkg/tln"
 )
 
-// A typed decision decides whether a chat model reviews a unit, and a rule
-// gates on the review. Block names sort reader-first ("A…" reads what
-// "B…" writes, "0…" reads what "A…" writes), so name or map order alone
-// would run the review before the decision exists.
 const gatedReviewSrc = `
 rule "0 Block an access change the review confirms" {
   for records where type == "code_unit" and attr "unit.llm_result" == "mismatch"
@@ -53,7 +49,6 @@ test "seed" {
 `
 
 func TestRun_EnrichGatedOnAnotherEnrichRunsAfterIt(t *testing.T) {
-	// Map iteration order varies run to run; repeat so a lucky order can't pass.
 	for i := 0; i < 25; i++ {
 		store := tln.NewMemoryStore()
 		if _, err := tln.Seed(context.Background(), store, gatedReviewSeed); err != nil {
@@ -96,8 +91,6 @@ func TestRun_EnrichGatedOnAnotherEnrichRunsAfterIt(t *testing.T) {
 	}
 }
 
-// The gate can sit behind a define (`is "…"`) or a derived predicate: both
-// are inlined at plan time, so the review still depends on the decider.
 const gatedViaInlinedSrc = `
 define "widens_access" {
   attr "unit.access_change" == "widens access"
