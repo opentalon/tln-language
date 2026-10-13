@@ -51,6 +51,12 @@ type QueryPlan struct {
 	// conflicts between rules that matched the same row — including rules
 	// with no `do` clauses, which defeat without firing anything.
 	Rule *ast.RuleBlock
+	// Reads and Writes are the attribute names the block reads (selector,
+	// conditions, tool args, action templates) and asserts (an enrich
+	// block's `update attr` targets). RunAll orders blocks by them so a
+	// block runs after every block that writes an attribute it reads.
+	Reads  []string
+	Writes []string
 }
 
 // PlanStep is implemented by FactQuery, GoComputation, MLComputation, and Filter.
@@ -821,6 +827,10 @@ func (p *planner) planEnrich(b *ast.EnrichBlock) *QueryPlan {
 		},
 		Into: "enrichments",
 	})
+	plan.Reads = p.enrichReads(b)
+	for _, u := range b.Updates {
+		plan.Writes = append(plan.Writes, u.Attr)
+	}
 	return plan
 }
 
@@ -858,6 +868,7 @@ func (p *planner) planRule(b *ast.RuleBlock) *QueryPlan {
 			Into:     ActionsVar,
 		})
 	}
+	plan.Reads = p.ruleReads(b)
 	return plan
 }
 
