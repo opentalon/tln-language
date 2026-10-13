@@ -179,7 +179,12 @@ func NewExecutor(client FactStore) *Executor {
 // RunAll executes all plans and returns results keyed by block name.
 func (e *Executor) RunAll(ctx context.Context, plans map[string]*planner.QueryPlan) (map[string]*BlockResult, error) {
 	results := make(map[string]*BlockResult, len(plans))
-	for name, plan := range plans {
+	order, cycle := planner.ExecutionOrder(plans)
+	if len(cycle) > 0 {
+		tlnlog.Default().WarnContext(ctx, "blocks on a dependency cycle; broke it at these, in name order", "blocks", cycle)
+	}
+	for _, name := range order {
+		plan := plans[name]
 		result, err := e.Run(ctx, plan)
 		if err != nil {
 			return results, fmt.Errorf("block %q: %w", name, err)

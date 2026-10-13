@@ -50,7 +50,9 @@ type QueryPlan struct {
 	// only. The runtime needs it after execution to resolve defeasible
 	// conflicts between rules that matched the same row — including rules
 	// with no `do` clauses, which defeat without firing anything.
-	Rule *ast.RuleBlock
+	Rule   *ast.RuleBlock
+	Reads  []string
+	Writes []string
 }
 
 // PlanStep is implemented by FactQuery, GoComputation, MLComputation, and Filter.
@@ -579,6 +581,11 @@ func (p *planner) planAll() (map[string]*QueryPlan, diagnostic.List) {
 			// addPredicateCall; it has no standalone plan (like define).
 		}
 	}
+	for _, b := range p.prog.Blocks {
+		if plan, ok := plans[b.BlockName()]; ok {
+			plan.Reads = p.blockReads(b)
+		}
+	}
 	return plans, p.diags
 }
 
@@ -821,6 +828,9 @@ func (p *planner) planEnrich(b *ast.EnrichBlock) *QueryPlan {
 		},
 		Into: "enrichments",
 	})
+	for _, u := range b.Updates {
+		plan.Writes = append(plan.Writes, u.Attr)
+	}
 	return plan
 }
 
@@ -1648,6 +1658,16 @@ func walkAttrRefs(c ast.Condition, add func(string)) {
 	case *ast.HasCondition:
 		walkExprAttrs(cc.Subject, add)
 		add(cc.Type)
+	case *ast.TemporalCondition:
+		walkExprAttrs(cc.Subject, add)
+	case *ast.ChangedToCondition:
+		add(cc.Attribute)
+		walkExprAttrs(cc.Value, add)
+	case *ast.AnomalyCondition:
+		walkExprAttrs(cc.Subject, add)
+	case *ast.CorrelationCondition:
+		walkExprAttrs(cc.Left, add)
+		walkExprAttrs(cc.Right, add)
 	}
 }
 
