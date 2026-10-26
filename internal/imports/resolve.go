@@ -42,13 +42,14 @@ import (
 // appear before the caller's own, in the order their import
 // statements were declared. Recursive imports are inlined depth-first
 // so deeply-nested helpers land before the files that consume them.
-func Resolve(prog *ast.Program, basePath string) (*ast.Program, diagnostic.List) {
+func Resolve(prog *ast.Program, basePath string, searchDirs ...string) (*ast.Program, diagnostic.List) {
 	if len(prog.Imports) == 0 {
 		return prog, nil
 	}
 	r := &resolver{
-		seen:   map[string]bool{},
-		origin: map[ast.Block]string{},
+		seen:       map[string]bool{},
+		origin:     map[ast.Block]string{},
+		searchDirs: searchDirs,
 	}
 	if abs, err := filepath.Abs(basePath); err == nil {
 		r.seen[abs] = true
@@ -74,7 +75,8 @@ type resolver struct {
 	seen map[string]bool
 	// origin maps each imported block back to the file that declared
 	// it, so a name-collision diagnostic can point at both sides.
-	origin map[ast.Block]string
+	origin     map[ast.Block]string
+	searchDirs []string
 }
 
 // walk loads each import recursively. `fromPath` is the file that
@@ -102,7 +104,7 @@ func (r *resolver) walk(imports []ast.ImportStatement, fromPath string) ([]ast.B
 			target = found
 		}
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(baseDir, target)
+			target = r.locate(baseDir, target)
 		}
 		absTarget, err := filepath.Abs(target)
 		if err != nil {
@@ -151,6 +153,22 @@ func (r *resolver) walk(imports []ast.ImportStatement, fromPath string) ([]ast.B
 		out = append(out, subProg.Blocks...)
 	}
 	return out, diags
+}
+
+func (r *resolver) locate(baseDir, rel string) string {
+	local := filepath.Join(baseDir, rel)
+	if _, err := os.Stat(local); err == nil {
+		return local
+	}
+	for _, dir := range r.searchDirs {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			return filepath.Join(dir, rel)
+		}
+	}
+	return local
 }
 
 // isModuleName reports whether an import target is a module name (e.g.

@@ -114,7 +114,7 @@ func runBuild() {
 	// Resolve `import "./other.tln"` directives by merging the named
 	// files' blocks into the program before validation.
 	if len(prog.Imports) > 0 {
-		merged, importDiags := imports.Resolve(prog, path)
+		merged, importDiags := imports.Resolve(prog, path, filepath.SplitList(os.Getenv("TLN_PATH"))...)
 		allDiags = append(allDiags, importDiags...)
 		if !importDiags.HasErrors() {
 			fmt.Printf("==> %s: resolved %d import(s)\n", file, len(prog.Imports))
@@ -615,7 +615,7 @@ func compile(label, basePath, src string) (map[string]*planner.QueryPlan, bool) 
 	allDiags = append(allDiags, pd...)
 
 	if len(prog.Imports) > 0 {
-		merged, importDiags := imports.Resolve(prog, basePath)
+		merged, importDiags := imports.Resolve(prog, basePath, filepath.SplitList(os.Getenv("TLN_PATH"))...)
 		allDiags = append(allDiags, importDiags...)
 		if !importDiags.HasErrors() {
 			prog = merged

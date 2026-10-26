@@ -402,6 +402,8 @@ classify "Vehicle failure risk" {
 
 kNN models store their labeled examples (lazy); decision-tree models store the fitted tree itself (`fitted tree { node … }`, eager). Models resolve from **two providers under the same qualified name** — tln `model` blocks *and* models a host registers in Go — so an embedding host can serve production models tln source references transparently.
 
+A file import (`import "shared.tln"`) resolves next to the importing file. When it isn't there, the `tln` CLI looks in each directory of `TLN_PATH` (separated like `PATH`), so a tool can ship a library file once instead of every project vendoring it. Absolute imports never consult `TLN_PATH`.
+
 ## Control flow and string functions
 
 tln stays declarative where it counts, but action bodies (today: `remediate`) support imperative control flow — `if/else`, `for each`, and a bounded `while` — branching on the same condition grammar the rest of the language uses:
